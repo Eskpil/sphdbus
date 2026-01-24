@@ -6,6 +6,7 @@ const mpris = @import("mpris");
 
 const DbusHandler = struct {
     connection: dbus.DbusConnection,
+    stream: std.net.Stream,
     state: union(enum) {
         wait_initialize,
         wait_volume: dbus.CallHandle,
@@ -23,9 +24,15 @@ const DbusHandler = struct {
         const connection = try dbus.dbusConnection(reader.interface(), &writer.interface);
 
         return .{
+            .stream = stream,
             .connection = connection,
             .state = .wait_initialize,
         };
+    }
+
+    pub fn deinit(self: *DbusHandler) void {
+        self.stream.close();
+
     }
 
     fn poll(self: *DbusHandler, options: dbus.ParseOptions) !void {
@@ -101,6 +108,7 @@ pub fn main() !void {
     };
 
     var handler = try DbusHandler.init(alloc);
+    defer handler.deinit();
 
     handler.poll(parse_options) catch |e| {
         const diagnostics_msg = diagnostics.message();

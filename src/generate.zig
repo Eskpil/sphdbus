@@ -1,261 +1,10 @@
 const std = @import("std");
 const sphtud = @import("sphtud");
 const dbus = @import("sphdbus.zig");
+const DbusSchemaParser = @import("DbusSchemaParser.zig");
+const helpers = @import("generate_helpers.zig");
 
 // node -> interface -> method
-
-const MethodArg = struct {
-    typ: []const u8,
-    name: []const u8,
-};
-
-const Method = struct {
-    name: []const u8 = "",
-    args: sphtud.util.RuntimeSegmentedList(MethodArg) = .empty,
-    ret: sphtud.util.RuntimeSegmentedList(MethodArg) = .empty,
-
-    pub fn init(alloc: std.mem.Allocator, expansion_alloc: sphtud.util.ExpansionAlloc, name: []const u8) !Method {
-        return .{
-            .name = try alloc.dupe(u8, name),
-            // FIXME: Update guesses
-            .args = try .init(alloc, expansion_alloc, 100, 1000),
-            // FIXME: Update guesses
-            .ret = try .init(alloc, expansion_alloc, 100, 1000),
-        };
-    }
-};
-
-const Interface = struct {
-    name: []const u8 = "",
-    methods: sphtud.util.RuntimeSegmentedList(Method) = .empty,
-    properties: sphtud.util.RuntimeSegmentedList(Property) = .empty,
-
-    pub fn init(alloc: std.mem.Allocator, expansion_alloc: sphtud.util.ExpansionAlloc, name: []const u8) !Interface {
-        return .{
-            .name = try alloc.dupe(u8, name),
-            // FIXME: update guesses,
-            .methods = try .init(alloc, expansion_alloc, 100, 10000),
-            .properties = try .init(alloc, expansion_alloc, 100, 10000),
-        };
-    }
-};
-
-const Property = struct {
-    name: []const u8 = "",
-    typ: []const u8 = "",
-    access: PropertyAccess = .read,
-
-    const PropertyAccess = enum {
-        read,
-        readwrite,
-    };
-};
-
-const DbusSchemaParser = struct {
-    alloc: std.mem.Allocator,
-    expansion_alloc: sphtud.util.ExpansionAlloc,
-    current_interface: Interface = .{},
-    current_method: Method = .{},
-    output: sphtud.util.RuntimeSegmentedList(Interface),
-    state: enum {
-        default,
-        interface,
-        method,
-    } = .default,
-
-    fn step(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
-        switch (self.state) {
-            .default => try self.handleDefault(item),
-            .interface => try self.handleInterface(item),
-            .method => try self.handleMethod(item),
-        }
-    }
-
-    fn handleDefault(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
-        switch (item.type) {
-            .element_start => {
-                if (std.mem.eql(u8, item.name, "interface")) {
-                    self.current_interface = try .init(
-                        self.alloc,
-                        self.expansion_alloc,
-                        (try item.attributeByKey("name")) orelse return error.NoInterfaceName,
-                    );
-                    self.state = .interface;
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn handleInterface(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
-        switch (item.type) {
-            .element_start => {
-                if (std.mem.eql(u8, item.name, "method")) {
-                    self.current_method = try .init(
-                        self.alloc,
-                        self.expansion_alloc,
-                        (try item.attributeByKey("name")) orelse return error.NoMethodName,
-                    );
-                    self.state = .method;
-                }
-
-                if (std.mem.eql(u8, item.name, "property")) {
-                    const name = (try item.attributeByKey("name")) orelse return error.NoPropertyName;
-                    const typ = (try item.attributeByKey("type")) orelse return error.NoPropertyType;
-                    const access_s = (try item.attributeByKey("access")) orelse return error.NoPropertyAccess;
-
-                    const access = std.meta.stringToEnum(Property.PropertyAccess, access_s) orelse return error.UnimplementedAccess;
-                    try self.current_interface.properties.append(.{
-                        .access = access,
-                        .typ = try self.alloc.dupe(u8, typ),
-                        .name = try self.alloc.dupe(u8, name),
-                    });
-                }
-
-                // We do not handle nested interfaces yet
-                std.debug.assert(!std.mem.eql(u8, item.name, "interface"));
-            },
-            .element_end => {
-                // If we see nested interface we will fall over
-                if (std.mem.eql(u8, item.name, "interface")) {
-                    try self.output.append(self.current_interface);
-                    self.current_interface = .{};
-                    self.state = .default;
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn handleMethod(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
-        switch (item.type) {
-            .element_start => {
-                if (std.mem.eql(u8, item.name, "arg")) {
-                    const dir = try item.attributeByKey("direction") orelse return error.NoDir;
-                    const typ = try self.alloc.dupe(u8, try item.attributeByKey("type") orelse return error.NoType);
-                    const name = try self.alloc.dupe(u8, try item.attributeByKey("name") orelse return error.NoName);
-                    if (std.mem.eql(u8, dir, "in")) {
-                        try self.current_method.args.append(.{
-                            .typ = typ,
-                            .name = name,
-                        });
-                    } else if (std.mem.eql(u8, dir, "out")) {
-                        try self.current_method.ret.append(.{
-                            .typ = typ,
-                            .name = name,
-                        });
-                    }
-                }
-                // We do not handle nested methods yet
-                std.debug.assert(!std.mem.eql(u8, item.name, "method"));
-            },
-            .element_end => {
-                // If we see nested interface we will fall over
-                if (std.mem.eql(u8, item.name, "method")) {
-                    try self.current_interface.methods.append(self.current_method);
-                    self.current_method = .{};
-                    self.state = .interface;
-                }
-            },
-            else => {},
-        }
-    }
-};
-
-const InterfaceTypeNameFormatter = struct {
-    name: []const u8,
-
-    pub fn format(self: InterfaceTypeNameFormatter, writer: *std.Io.Writer) !void {
-        var it = std.mem.splitScalar(u8, self.name, '.');
-        while (it.next()) |segment| {
-            try writer.writeByte(std.ascii.toUpper(segment[0]));
-            try writer.writeAll(segment[1..]);
-        }
-    }
-};
-
-fn interfaceTypeName(name: []const u8) InterfaceTypeNameFormatter {
-    return .{ .name = name };
-}
-
-const DbusToZigTypeFormatter = struct {
-    typ: []const u8,
-
-    pub fn format(self: DbusToZigTypeFormatter, writer: *std.Io.Writer) !void {
-        var reader = std.Io.Reader.fixed(self.typ);
-        var tokenizer = dbus.SignatureTokenizer{
-            .reader = &reader,
-            .diagnostics = null,
-        };
-
-        // FIXME: Very similar to variant parsing code
-        const Tag = enum {
-            array,
-            @"struct",
-        };
-
-        var tag_stack_buf: [10]Tag = undefined;
-        var tag_stack = std.ArrayList(Tag).initBuffer(&tag_stack_buf);
-
-        while (true) {
-            const tag = tokenizer.next() catch {
-                return error.WriteFailed;
-            } orelse break;
-
-            switch (tag) {
-                .array_start => {
-                    try writer.writeAll("dbus.ParseArray(");
-                    tag_stack.appendBounded(.array) catch unreachable;
-                },
-                .struct_start => {
-                    try writer.writeAll("struct {");
-                    tag_stack.appendBounded(.@"struct") catch unreachable;
-                },
-                .struct_end => {
-                    try writer.writeAll("}");
-                    const last_elem = tag_stack.pop();
-                    std.debug.assert(last_elem == .@"struct");
-                },
-                .kv_start => {
-                    try writer.writeAll("dbus.DbusKV(");
-                    tag_stack.appendBounded(.@"struct") catch unreachable;
-                },
-                .kv_end => {
-                    try writer.writeAll(")");
-                    const last_elem = tag_stack.pop();
-                    std.debug.assert(last_elem == .@"struct");
-                },
-                .u32 => try writer.writeAll("u32"),
-                .u64 => try writer.writeAll("u64"),
-                .i32 => try writer.writeAll("i32"),
-                .i64 => try writer.writeAll("i64"),
-                .f64 => try writer.writeAll("f64"),
-                .object => try writer.writeAll("dbus.DbusObject"),
-                .string => try writer.writeAll("dbus.DbusString"),
-                .bool => try writer.writeAll("bool"),
-                .variant => try writer.writeAll("dbus.ParseVariant"),
-                .signature => try writer.writeAll("dbus.DbusSignature"),
-            }
-
-            switch (tag) {
-                .array_start, .struct_start, .kv_start => {},
-                else => {
-                    const last_elem = tag_stack.getLastOrNull();
-                    if (last_elem == .@"struct") {
-                        try writer.writeAll(", ");
-                    } else if (last_elem == .array) {
-                        try writer.writeAll(")");
-                        _ = tag_stack.pop();
-                    }
-                },
-            }
-        }
-    }
-};
-
-fn dbusToZigType(typ: []const u8) DbusToZigTypeFormatter {
-    return .{ .typ = typ };
-}
 
 fn isTypeSupported(name: []const u8, typ: []const u8) bool {
     if (typ[0] == 'h') {
@@ -278,7 +27,7 @@ fn isTypeSupported(name: []const u8, typ: []const u8) bool {
     return true;
 }
 
-fn isPropertySupported(property: Property) bool {
+fn isPropertySupported(property: DbusSchemaParser.Property) bool {
     if (!isTypeSupported(property.name, property.typ)) return false;
 
     return true;
@@ -295,7 +44,7 @@ fn needsAllocation(signature: []const u8) !bool {
     return false;
 }
 
-fn isMethodSupported(method: Method) bool {
+fn isMethodSupported(method: DbusSchemaParser.Method) bool {
     var arg_it = method.args.iter();
     while (arg_it.next()) |arg| {
         if (!isTypeSupported(method.name, arg.typ)) return false;
@@ -307,19 +56,6 @@ fn isMethodSupported(method: Method) bool {
     }
 
     return true;
-}
-
-const PascalToCamelFormatter = struct {
-    val: []const u8,
-
-    pub fn format(self: PascalToCamelFormatter, writer: *std.Io.Writer) !void {
-        try writer.writeByte(std.ascii.toLower(self.val[0]));
-        try writer.writeAll(self.val[1..]);
-    }
-};
-
-fn pascalToCamel(val: []const u8) PascalToCamelFormatter {
-    return .{ .val = val };
 }
 
 const ReservedWords = enum {
@@ -349,17 +85,8 @@ pub fn main() !void {
 
     var content_writer = std.Io.Writer.Discarding.init(&.{});
     var parser = sphtud.xml.Parser.init(&f_reader.interface);
-    var dbus_parser = DbusSchemaParser{
-        .alloc = root_alloc.allocator(),
-        .expansion_alloc = root_alloc.expansion(),
-        .output = try .init(
-            root_alloc.allocator(),
-            root_alloc.expansion(),
-            // FIXME: Sane guesses please :)
-            100,
-            1000,
-        ),
-    };
+    var dbus_parser = try DbusSchemaParser.init(root_alloc.allocator(), root_alloc.expansion());
+
     while (try parser.next(&content_writer.writer)) |item| {
         try dbus_parser.step(item);
     }
@@ -377,7 +104,7 @@ pub fn main() !void {
         try f_writer.writer.print(
             \\pub const {f} = struct {{
             \\
-        , .{interfaceTypeName(interface.name)});
+        , .{helpers.interfaceTypeName(interface.name)});
 
         var method_it = interface.methods.iter();
         while (method_it.next()) |method| {
@@ -400,7 +127,7 @@ pub fn main() !void {
                     \\
                 , .{
                     arg.name,
-                    dbusToZigType(arg.typ),
+                    helpers.dbusToZigType(arg.typ),
                 });
             }
 
@@ -427,7 +154,7 @@ pub fn main() !void {
                 \\            pub fn @"{f}"(
                 \\                self: Self,
                 \\
-            , .{pascalToCamel(method.name)});
+            , .{helpers.pascalToCamel(method.name)});
 
             var arg_it = method.args.iter();
             while (arg_it.next()) |arg| {
@@ -436,7 +163,7 @@ pub fn main() !void {
                     \\
                 , .{
                     arg.name,
-                    dbusToZigType(arg.typ),
+                    helpers.dbusToZigType(arg.typ),
                 });
             }
             try f_writer.writer.print(
@@ -523,7 +250,7 @@ pub fn main() !void {
             , .{
                 .property_name = property.name,
                 .interface_name = interface.name,
-                .zig_type = dbusToZigType(property.typ),
+                .zig_type = helpers.dbusToZigType(property.typ),
             });
         }
 

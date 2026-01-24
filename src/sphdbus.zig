@@ -2,6 +2,8 @@ const std = @import("std");
 const sphtud = if (builtin.is_test) @import("sphtud") else void;
 const builtin = @import("builtin");
 
+pub const service = @import("service.zig");
+
 pub fn sessionBus() !std.net.Stream {
     const session_address = std.posix.getenv("DBUS_SESSION_BUS_ADDRESS") orelse return error.NoSessionAddress;
     const socket_path = try extractUnixPathFromAddress(session_address);
@@ -770,9 +772,14 @@ pub const DbusHeader = struct {
         try w.print("serial: {}\n", .{self.serial});
 
         try w.print("headers\n", .{});
-        for (self.header_fields) |f| {
-            try w.print("    {t}: {f}\n", .{ f.typ, f.val });
-        }
+        // FIXME:
+        //for (self.header_fields) |f| {
+        //    switch (f) {
+        //        inline else => |val, t| {
+        //            try w.print("    {t}: {f}\n", .{ t, val });
+        //        },
+        //    }
+        //}
     }
 };
 
@@ -1093,6 +1100,8 @@ pub const DbusErrorDiagnostics = struct {
         return self.message_buf[0..self.message_len];
     }
 
+    // FIXME: Hexdump like visualization of packet for diagnostics. Maybe this
+    // should be a sphtud thing
     pub fn dumpPacket(self: DbusErrorDiagnostics, w: *std.Io.Writer) !void {
         var line_it: usize = 0;
 
@@ -1544,4 +1553,8 @@ test "generated interface spotify play pause" {
         const expected_volume_req = .{ 108, 1, 0, 1, 64, 0, 0, 0, 4, 0, 0, 0, 137, 0, 0, 0, 1, 1, 111, 0, 23, 0, 0, 0, 47, 111, 114, 103, 47, 109, 112, 114, 105, 115, 47, 77, 101, 100, 105, 97, 80, 108, 97, 121, 101, 114, 50, 0, 6, 1, 115, 0, 30, 0, 0, 0, 111, 114, 103, 46, 109, 112, 114, 105, 115, 46, 77, 101, 100, 105, 97, 80, 108, 97, 121, 101, 114, 50, 46, 115, 112, 111, 116, 105, 102, 121, 0, 0, 2, 1, 115, 0, 31, 0, 0, 0, 111, 114, 103, 46, 102, 114, 101, 101, 100, 101, 115, 107, 116, 111, 112, 46, 68, 66, 117, 115, 46, 80, 114, 111, 112, 101, 114, 116, 105, 101, 115, 0, 3, 1, 115, 0, 3, 0, 0, 0, 83, 101, 116, 0, 0, 0, 0, 0, 8, 1, 103, 0, 3, 115, 115, 118, 0, 0, 0, 0, 0, 0, 0, 0, 29, 0, 0, 0, 111, 114, 103, 46, 109, 112, 114, 105, 115, 46, 77, 101, 100, 105, 97, 80, 108, 97, 121, 101, 114, 50, 46, 80, 108, 97, 121, 101, 114, 0, 0, 0, 6, 0, 0, 0, 86, 111, 108, 117, 109, 101, 0, 1, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 240, 63 };
         try std.testing.expectEqualSlices(u8, &expected_volume_req, try fixture.rx_reader.interface.take(expected_volume_req.len));
     }
+}
+
+test {
+    std.testing.refAllDeclsRecursive(@This());
 }

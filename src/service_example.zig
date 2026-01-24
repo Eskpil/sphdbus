@@ -3,6 +3,7 @@ const sphtud = @import("sphtud");
 const builtin = @import("builtin");
 const dbus = @import("sphdbus");
 const mpris = @import("mpris");
+const service_def = @import("test_service.zig");
 
 fn waitForResponse(connection: *dbus.DbusConnection, handle: dbus.CallHandle, parse_options: dbus.ParseOptions) !void {
     while (true) {
@@ -74,32 +75,7 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
         var out_buf: [4096]u8 = undefined;
         var writer = std.Io.Writer.fixed(&out_buf);
 
-        for (services) |service| {
-            if (std.mem.eql(u8, service.path, path.inner)) {
-                try connection.ret(message.serial, sender.inner, .{
-                    dbus.DbusString{ .inner = service.api.definition() },
-                });
-
-                return null;
-            }
-            try writer.writeAll(
-                \\<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-                \\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-                \\<node >
-                \\
-            );
-
-            if (getDirectChildPathName(path.inner, service.path)) |name| {
-                try writer.print(
-                    \\<node name="{s}"/>
-                    \\
-                , .{name});
-            }
-
-            try writer.writeAll(
-                \\</node>
-            );
-        }
+        try dbus.service.genIntrospectionResponse(service_def, path.inner, &writer);
 
         try connection.ret(message.serial, sender.inner, .{
             dbus.DbusString{ .inner = writer.buffered() },
@@ -124,35 +100,69 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
     return null;
 }
 
-fn writeResponse(message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
-    const Api = struct {
-        fn name(_: @This()) []const u8 {
-            return "dev.sphaerophoria.TestService";
-        }
 
-        fn definition(_: @This()) []const u8 {
-            return 
-            \\<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-            \\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-            \\<node >
-            \\  <interface name="dev.sphaerophoria.TestService">
-            \\    <method name="Hello">
-            \\      <arg direction="out" type="s"/>
-            \\    </method>
-            \\  </interface>
-            \\</node>
-            ;
-        }
-    };
+//// XML for all the services i support
+//// XML for introsection response on a specific path
+//fn genIntrospectionResponse(w: *std.Io.Writer, path: []const u8, def: anytype) !void {
+//
+//
+//}
 
-    const services = [_]ObjectApi(Api){
-        .{
-            .path = "/dev/sphaerophoria/TestService",
-            .api = .{},
+// getProperty
+// setProperty
+// introspection
+//
+// services with endpoints
+//
+// * My service has one name
+// * My service has multiple endpoints
+//
+// mysite.com/thing/thing
+
+// Needs to be able to respond with
+//  * get property
+//  * set property
+//  * custom
+//
+//  * Which path
+//  * Which service
+//  * Which fn
+//fn handleMyDbusRequest(comptime HandlerRequest: type, def: []const DbusObjectDef(HandlerRequest)) ?HandlerRequest {
+//}
+
+
+fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
+    const request = (try dbus.service.handleMessage(service_def, scratch, message, connection)) orelse return;
+    std.debug.print("{any}\n", .{request});
+    switch (request) {
+        .@"/dev/sphaerophoria/TestService" => |path_req| switch (path_req) {
+            .@"dev.sphaerophoria.TestService" => |interface_req| switch (interface_req) {
+                .method => |method_req| switch (method_req) {
+                    .Hello => |args| {
+                        var buf: [4096]u8 = undefined;
+                        const s = try std.fmt.bufPrint(&buf, "Hello {s}", .{args.Name});
+                        try connection.ret(
+                            message.serial,
+                            message.headers.sender.?.inner,
+                            dbus.DbusString{ .inner = s },
+                        );
+                    },
+                    .Goodbye => |args| {
+                        var buf: [4096]u8 = undefined;
+                        const s = try std.fmt.bufPrint(&buf, "Goodbye {s}", .{args.Name});
+                        try connection.ret(
+                            message.serial,
+                            message.headers.sender.?.inner,
+                            dbus.DbusString{ .inner = s },
+                        );
+
+
+                    },
+                },
+                else => unreachable,
+            },
         },
-    };
-
-    _ = (try handleCommonDbusRequests(Api, message, connection, &services)) orelse return;
+    }
 
     const member = message.headers.member orelse return error.NoMember;
     const sender = message.headers.sender orelse return error.NoSender;
@@ -223,7 +233,9 @@ pub fn main() !void {
 
     try waitForResponse(&connection, handle, parse_options);
 
+    const cp = buf_alloc.checkpoint();
     while (true) {
+        buf_alloc.restore(cp);
         diagnostics.reset();
 
         const res = connection.poll(parse_options) catch |e| switch (e) {
@@ -247,7 +259,7 @@ pub fn main() !void {
             else => continue,
         };
 
-        writeResponse(params, &connection) catch |e| switch (e) {
+        writeResponse(buf_alloc.backAllocator(), params, &connection) catch |e| switch (e) {
             error.WriteFailed => {
                 std.log.info("IO failure, shutting down", .{});
                 break;

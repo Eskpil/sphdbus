@@ -32,6 +32,27 @@ pub fn build(b: *std.Build) !void {
     });
     mpris_mod.addImport("sphdbus", dbus_mod);
 
+
+    const generate_service = b.addExecutable(.{
+        .name = "generate_service",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/generate_service.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    generate_service.root_module.addImport("sphtud", sphtud);
+
+    // FIXME: Holy crap so much code in build.zig unparsable by any human
+    const run_generate_mpris_service = b.addRunArtifact(generate_service);
+    run_generate_mpris_service.addFileArg(b.path("res/mpris_serivce.xml"));
+    const mpris_service_file = run_generate_mpris_service.addOutputFileArg("mpris.zig");
+
+    const mpris_service_mod = b.createModule(.{
+        .root_source_file = mpris_service_file,
+    });
+    mpris_service_mod.addImport("sphdbus", dbus_mod);
+
     const example = b.addExecutable(.{
         .name = "mpris_example",
         .root_module = b.createModule(.{
@@ -62,9 +83,11 @@ pub fn build(b: *std.Build) !void {
     dbus_tests.use_llvm = true;
     dbus_tests.root_module.addImport("sphtud", sphtud);
     dbus_tests.root_module.addImport("mpris", mpris_mod);
+    dbus_tests.root_module.addImport("mpris_service", mpris_service_mod);
 
     b.installArtifact(example);
     b.installArtifact(generate);
+    b.installArtifact(generate_service);
     b.installArtifact(service_example);
     b.installArtifact(dbus_tests);
 }
