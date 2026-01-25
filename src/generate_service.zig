@@ -74,20 +74,27 @@ fn genInterfaceRequest(reader: *std.fs.File.Reader, interface: *DbusSchemaParser
         \\
     );
 
-    try w.writeAll(
-        \\            const Property = union(enum) {
-        \\
-    );
-    var property_it = interface.properties.iter();
-    while (property_it.next()) |prop| {
-        try genInterfaceProperty(prop, w);
-    }
+    if (interface.properties.len == 0) {
+        try w.writeAll(
+            \\            const Property = struct {};
+            \\
+        );
+    } else {
+        try w.writeAll(
+            \\            const Property = union(enum) {
+            \\
+        );
+        var property_it = interface.properties.iter();
+        while (property_it.next()) |prop| {
+            try genInterfaceProperty(prop, w);
+        }
 
-    // Finish property
-    try w.writeAll(
-        \\            };
-        \\
-    );
+        // Finish property
+        try w.writeAll(
+            \\            };
+            \\
+        );
+    }
 
     // docstring
     // FIXME: split gen docstring

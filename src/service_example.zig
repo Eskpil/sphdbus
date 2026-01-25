@@ -133,14 +133,16 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
 
 fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
     const request = (try dbus.service.handleMessage(service_def, scratch, message, connection)) orelse return;
-    std.debug.print("{any}\n", .{request});
+
     switch (request) {
         .@"/dev/sphaerophoria/TestService" => |path_req| switch (path_req) {
             .@"dev.sphaerophoria.TestService" => |interface_req| switch (interface_req) {
                 .method => |method_req| switch (method_req) {
                     .Hello => |args| {
                         var buf: [4096]u8 = undefined;
-                        const s = try std.fmt.bufPrint(&buf, "Hello {s}", .{args.Name});
+                        const s = std.fmt.bufPrint(&buf, "Hello {s}", .{args.Name.inner}) catch return error.InternalError;
+
+                        // FIXME: Return types should be typed
                         try connection.ret(
                             message.serial,
                             message.headers.sender.?.inner,
@@ -149,38 +151,19 @@ fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connec
                     },
                     .Goodbye => |args| {
                         var buf: [4096]u8 = undefined;
-                        const s = try std.fmt.bufPrint(&buf, "Goodbye {s}", .{args.Name});
+                        const s = std.fmt.bufPrint(&buf, "Goodbye {s}", .{args.Name.inner}) catch return error.InternalError;
+                        // FIXME: Return types should be typed
                         try connection.ret(
                             message.serial,
                             message.headers.sender.?.inner,
                             dbus.DbusString{ .inner = s },
                         );
-
-
                     },
                 },
                 else => unreachable,
             },
         },
     }
-
-    const member = message.headers.member orelse return error.NoMember;
-    const sender = message.headers.sender orelse return error.NoSender;
-
-    if (!std.mem.eql(u8, member.inner, "Hello")) {
-        try connection.err(
-            message.serial,
-            sender.inner,
-            .{ .inner = "org.freedesktop.DBus.Error.UnknownMethod" },
-            dbus.DbusString{ .inner = "unknown method" },
-        );
-    }
-
-    try connection.ret(
-        message.serial,
-        sender.inner,
-        dbus.DbusString{ .inner = "Hello world" },
-    );
 }
 
 fn dumpDiagnostics(diagnostics: dbus.DbusErrorDiagnostics) !void {
@@ -220,6 +203,7 @@ pub fn main() !void {
     var connection = try dbus.dbusConnection(reader.interface(), &writer.interface);
     while (try connection.poll(parse_options) != .initialized) {}
 
+    // FIXME: Registration of name maybe should be owned by sphdbus
     const handle = try connection.call(
         "/org/freedesktop/DBus",
         "org.freedesktop.DBus",
@@ -270,8 +254,50 @@ pub fn main() !void {
             error.SerializeError => {
                 std.log.err("Internal serialization error, dropping response", .{});
             },
-            error.NoMember, error.NoInterface, error.NoPath, error.NoSender => {
+            error.NoMember, error.NoSender, error.NoInterface, error.NoPath => {
                 std.log.err("Invalid request ({t}), dropping response", .{e});
+            },
+            // FIXME: This is rediculous, caller may want to define message,
+            // but maybe not. Maybe this all just lives in lib code
+            error.InvalidBody => {
+                try connection.err(
+                    params.serial,
+                    params.headers.sender.?.inner,
+                    .{ .inner = "org.freedesktop.DBus.Error.InvalidArgs"},
+                    null,
+                );
+            },
+            error.Unsupported => {
+                try connection.err(
+                    params.serial,
+                    params.headers.sender.?.inner,
+                    .{ .inner = "org.freedesktop.DBus.Error.NotSupported" },
+                    null,
+                );
+            },
+            error.InternalError => {
+                try connection.err(
+                    params.serial,
+                    params.headers.sender.?.inner,
+                    .{ .inner = "org.freedesktop.DBus.Error.Failed" },
+                    null,
+                );
+            },
+            error.InvalidInterface => {
+                try connection.err(
+                    params.serial,
+                    params.headers.sender.?.inner,
+                    .{ .inner = "org.freedesktop.DBus.Error.UnknownInterface" },
+                    null,
+                );
+            },
+            error.InvalidMethod => {
+                try connection.err(
+                    params.serial,
+                    params.headers.sender.?.inner,
+                    .{ .inner = "org.freedesktop.DBus.Error.UnknownMethod" },
+                    null,
+                );
             },
             error.Uninitialized => unreachable,
         };

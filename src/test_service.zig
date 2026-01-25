@@ -14,8 +14,7 @@ pub const Request = union(enum) {
             get_property: Property,
             set_property: Property,
 
-            const Property = union(enum) {
-            };
+            const Property = struct {};
 
             pub const docstring: []const u8 =
                 \\<interface name="dev.sphaerophoria.TestService">

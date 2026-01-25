@@ -1,20 +1,35 @@
 const std = @import("std");
 const dbus = @import("sphdbus.zig");
 
-pub fn handleMessage(comptime Def: type, scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !?Def.Request {
+const MessageHandlerError = error {
+    NoMember,
+    NoSender,
+    NoInterface,
+    NoPath,
+    WriteFailed,
+    InternalError,
+    InvalidBody,
+    Unsupported,
+    InvalidInterface,
+    InvalidMethod,
+};
+
+pub fn handleMessage(comptime Def: type, scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) MessageHandlerError!?Def.Request {
     const req_headers = try RequiredHeaders.init(message);
 
     if (try parseRequest(Def.Request, message, req_headers)) |r| return r;
 
-    if (isIntrospectRequest(message, req_headers)) {
-        return error.UnknownMessage;
-    }
+    try ensureIntrospectionRequest(message, req_headers);
 
     var introspection_writer = std.Io.Writer.Allocating.init(scratch);
     try genIntrospectionResponse(Def, req_headers.path, &introspection_writer.writer);
-    try connection.ret(message.serial, req_headers.sender, .{
+
+    connection.ret(message.serial, req_headers.sender, .{
         dbus.DbusString { .inner = introspection_writer.writer.buffered() },
-    });
+    }) catch {
+        // FIXME: Attach real error to diagnostics
+        return error.WriteFailed;
+    };
 
     return null;
 }
@@ -40,11 +55,10 @@ const RequiredHeaders = struct {
     }
 };
 
-fn isIntrospectRequest(message: dbus.ParsedMessage, headers: RequiredHeaders) bool {
-    if (message.message_type != .call) return false;
-    if (!std.mem.eql(u8, headers.interface, "org.freedesktop.DBus.Introspectable")) return false;
-    if (!std.mem.eql(u8, headers.member, "Introspect")) return false;
-    return true;
+fn ensureIntrospectionRequest(message: dbus.ParsedMessage, headers: RequiredHeaders) !void {
+    if (message.message_type != .call) return error.Unsupported;
+    if (!std.mem.eql(u8, headers.interface, "org.freedesktop.DBus.Introspectable")) return error.InvalidInterface;
+    if (!std.mem.eql(u8, headers.member, "Introspect")) return error.InvalidMethod;
 }
 
 const PropertyInterfaceReq = enum {
@@ -73,9 +87,11 @@ const PropertyInterfaceReq = enum {
     }
 };
 
-fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) !?T {
+fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?T {
     const TE = std.meta.Tag(T);
-    const pe = std.meta.stringToEnum(TE, required_headers.path) orelse return null;
+    const pe = std.meta.stringToEnum(TE, required_headers.path) orelse {
+        return null;
+    };
     switch (pe) {
         inline else => |t| {
             const interface = (try parseRequestPath(UnionType(T, t), message, required_headers)) orelse return null;
@@ -84,9 +100,11 @@ fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers:
     }
 }
 
-fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) !?Path {
+fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Path {
     const PE = std.meta.Tag(Path);
-    const pp = std.meta.stringToEnum(PE, required_headers.path) orelse return null;
+    const pp = std.meta.stringToEnum(PE, required_headers.interface) orelse {
+        return null;
+    };
     switch (pp) {
         inline else => |t| {
             const interface = (try parseRequestInterface(UnionType(Path, t), message, required_headers)) orelse return null;
@@ -95,7 +113,7 @@ fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_h
     }
 }
 
-fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) !?Interface {
+fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Interface {
     if (PropertyInterfaceReq.parse(message, required_headers)) |property_req| {
         _ = property_req;
         unreachable;
@@ -111,7 +129,7 @@ fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, 
     return Interface { .method = method };
 }
 
-fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) !?Method {
+fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Method {
     const MethodE = std.meta.Tag(Method);
 
     // FIXME: Should we error if it's an invalid member name?
@@ -119,8 +137,11 @@ fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, requir
     switch (me) {
         inline else => |t| {
             const Args = @FieldType(Method, @tagName(t));
-            // FIXME: We might want diagnostics passed down from the top level for this
-            const arg = try dbus.dbusParseBody(Args, message, .{});
+            const arg = dbus.dbusParseBody(Args, message, .{}) catch {
+                // FIXME: Collect real error into diagnostics
+                return error.InvalidBody;
+            };
+
             return @unionInit(Method, @tagName(t), arg);
         },
     }
@@ -146,7 +167,7 @@ test typeFieldNames {
     try std.testing.expectEqualStrings("/org/mpris/MediaPlayer2", paths[0]);
 }
 
-fn genIntrospectionResponseMatchingPath(comptime PathDef: type, w: *std.Io.Writer) !void {
+fn genIntrospectionResponseMatchingPath(comptime PathDef: type, w: *std.Io.Writer) MessageHandlerError!void {
     try w.writeAll(
         \\<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
         \\                  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
@@ -253,7 +274,7 @@ fn UnionType(comptime U: type, comptime tag: std.meta.Tag(U)) type {
     return @FieldType(U, @tagName(tag));
 }
 
-pub fn genIntrospectionResponse(comptime ServiceDef: type,  path: []const u8, w: *std.Io.Writer) !void {
+pub fn genIntrospectionResponse(comptime ServiceDef: type,  path: []const u8, w: *std.Io.Writer) MessageHandlerError!void {
     const service_paths = typeFieldNames(ServiceDef.Request);
 
     const PathEnum = @typeInfo(ServiceDef.Request).@"union".tag_type.?;
@@ -286,7 +307,10 @@ pub fn genIntrospectionResponse(comptime ServiceDef: type,  path: []const u8, w:
 
     for (service_paths) |sp| {
         if (getDirectChildPathName(path, sp)) |child_name| {
-            const gop = try seen_children.getOrPut(child_name) ;
+            const gop = seen_children.getOrPut(child_name) catch {
+                // FIXME: Attach source error to diagnostics struct somewhere
+                return error.InternalError;
+            };
             if (gop.found_existing) {
                 continue;
             }
