@@ -1075,7 +1075,7 @@ test "genIntrospectionResponse full definition" {
         \\</node>
     ;
 
-    var buf: [expected.len]u8 = undefined;
+    var buf: [expected.len * 10]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
 
     try genIntrospectionResponse(mpris_service, "/org/mpris/MediaPlayer2", &w);

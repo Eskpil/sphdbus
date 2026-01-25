@@ -110,21 +110,22 @@ fn genInterfaceRequest(reader: *std.fs.File.Reader, interface: *DbusSchemaParser
     );
 
     while (true) {
-        const line = limited.interface.takeSentinel('\n') catch |e| switch (e) {
+        const line = limited.interface.takeDelimiterExclusive('\n') catch |e| switch (e) {
             error.EndOfStream => break,
             else => return e,
         };
+
+        // FIXME: Merge failure with above
+        _ = limited.interface.discard(.limited(1)) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => return e,
+        };
+
         try w.print(
             \\                \\{s}
             \\
         , .{line});
     }
-
-    // FIXME: What the hell
-    try w.writeAll(
-        \\                \\
-    );
-    _ = try limited.interface.streamRemaining(w);
 
     try w.writeAll(
         \\
