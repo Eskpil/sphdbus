@@ -100,7 +100,6 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
     return null;
 }
 
-
 //// XML for all the services i support
 //// XML for introsection response on a specific path
 //fn genIntrospectionResponse(w: *std.Io.Writer, path: []const u8, def: anytype) !void {
@@ -129,7 +128,6 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
 //  * Which fn
 //fn handleMyDbusRequest(comptime HandlerRequest: type, def: []const DbusObjectDef(HandlerRequest)) ?HandlerRequest {
 //}
-
 
 fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
     const request = (try dbus.service.handleMessage(service_def, scratch, message, connection)) orelse return;
@@ -263,7 +261,7 @@ pub fn main() !void {
                 try connection.err(
                     params.serial,
                     params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.InvalidArgs"},
+                    .{ .inner = "org.freedesktop.DBus.Error.InvalidArgs" },
                     null,
                 );
             },

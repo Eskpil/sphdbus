@@ -128,7 +128,6 @@ fn handleMethod(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
     }
 }
 
-
 pub const MethodArg = struct {
     typ: []const u8,
     name: []const u8,
@@ -180,4 +179,3 @@ pub const Property = struct {
         readwrite,
     };
 };
-

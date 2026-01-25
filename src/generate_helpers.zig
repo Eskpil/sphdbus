@@ -108,4 +108,3 @@ pub const PascalToCamelFormatter = struct {
 pub fn pascalToCamel(val: []const u8) PascalToCamelFormatter {
     return .{ .val = val };
 }
-

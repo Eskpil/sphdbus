@@ -32,7 +32,6 @@ pub fn build(b: *std.Build) !void {
     });
     mpris_mod.addImport("sphdbus", dbus_mod);
 
-
     const generate_service = b.addExecutable(.{
         .name = "generate_service",
         .root_module = b.createModule(.{

@@ -34,7 +34,6 @@ fn genInterfaceMethod(method: *DbusSchemaParser.Method, w: *std.Io.Writer) !void
         \\
     , .{method.name});
 
-
     var args_it = method.args.iter();
     while (args_it.next()) |arg| {
         try w.print(
@@ -101,7 +100,7 @@ fn genInterfaceRequest(reader: *std.fs.File.Reader, interface: *DbusSchemaParser
     // FIXME: Remove any node starting with tp: to remove all the useless docs
     try reader.seekTo(interface.xml_start);
     const xml_len = interface.xml_end - interface.xml_start;
-    std.debug.print("start: {d} , end: {d}\n", .{interface.xml_start, interface.xml_end});
+    std.debug.print("start: {d} , end: {d}\n", .{ interface.xml_start, interface.xml_end });
     var line_buf: [4096]u8 = undefined;
     var limited = reader.interface.limited(.limited(xml_len), &line_buf);
     try w.writeAll(
@@ -169,7 +168,7 @@ fn genInterfaces(alloc: sphtud.alloc.LinearAllocator, base_path: []const u8, int
 
     // lol funny name...
     var full_relative_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const full_relative_path = try std.fmt.bufPrint(&full_relative_path_buf, "{f}", .{std.fs.path.fmtJoin(&.{base_path, interface_path})});
+    const full_relative_path = try std.fmt.bufPrint(&full_relative_path_buf, "{f}", .{std.fs.path.fmtJoin(&.{ base_path, interface_path })});
 
     std.debug.print("{s}\n", .{full_relative_path});
     const interface_f = try std.fs.cwd().openFile(full_relative_path, .{});
@@ -251,5 +250,4 @@ pub fn main() !void {
         \\
     );
     try output_writer.interface.flush();
-
 }

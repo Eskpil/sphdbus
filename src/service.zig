@@ -1,7 +1,7 @@
 const std = @import("std");
 const dbus = @import("sphdbus.zig");
 
-const MessageHandlerError = error {
+const MessageHandlerError = error{
     NoMember,
     NoSender,
     NoInterface,
@@ -25,7 +25,7 @@ pub fn handleMessage(comptime Def: type, scratch: std.mem.Allocator, message: db
     try genIntrospectionResponse(Def, req_headers.path, &introspection_writer.writer);
 
     connection.ret(message.serial, req_headers.sender, .{
-        dbus.DbusString { .inner = introspection_writer.writer.buffered() },
+        dbus.DbusString{ .inner = introspection_writer.writer.buffered() },
     }) catch {
         // FIXME: Attach real error to diagnostics
         return error.WriteFailed;
@@ -83,7 +83,6 @@ const PropertyInterfaceReq = enum {
         }
 
         return null;
-
     }
 };
 
@@ -126,7 +125,7 @@ fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, 
     // FIXME: Is it an error if the method does not exist here?
     const method = (try parseRequestMethod(MethodUnion, message, required_headers)) orelse return null;
 
-    return Interface { .method = method };
+    return Interface{ .method = method };
 }
 
 fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Method {
@@ -214,58 +213,58 @@ fn genIntrospectionResponseMatchingPath(comptime PathDef: type, w: *std.Io.Write
         \\</node>
     );
     const response2 =
-    \\  <interface name="org.mpris.MediaPlayer2">
-    \\    <method name="Raise"/>
-    \\    <method name="Quit"/>
-    \\    <property type="b" name="CanQuit" access="read"/>
-    \\    <property type="b" name="CanSetFullscreen" access="read"/>
-    \\    <property type="b" name="CanRaise" access="read"/>
-    \\    <property type="b" name="HasTrackList" access="read"/>
-    \\    <property type="s" name="Identity" access="read"/>
-    \\    <property type="s" name="DesktopEntry" access="read"/>
-    \\    <property type="as" name="SupportedUriSchemes" access="read"/>
-    \\    <property type="as" name="SupportedMimeTypes" access="read"/>
-    \\  </interface>
-    \\  <interface name="org.mpris.MediaPlayer2.Player">
-    \\    <method name="Next"/>
-    \\    <method name="Previous"/>
-    \\    <method name="Pause"/>
-    \\    <method name="PlayPause"/>
-    \\    <method name="Stop"/>
-    \\    <method name="Play"/>
-    \\    <method name="Seek">
-    \\      <arg type="x" name="Offset" direction="in"/>
-    \\    </method>
-    \\    <method name="SetPosition">
-    \\      <arg type="o" name="TrackId" direction="in"/>
-    \\      <arg type="x" name="Position" direction="in"/>
-    \\    </method>
-    \\    <method name="OpenUri">
-    \\      <arg type="s" name="Uri" direction="in"/>
-    \\    </method>
-    \\    <method name="LoadContextUri">
-    \\      <arg type="s" name="Uri" direction="in"/>
-    \\    </method>
-    \\    <signal name="Seeked">
-    \\      <arg type="x" name="Position"/>
-    \\    </signal>
-    \\    <property type="s" name="PlaybackStatus" access="read"/>
-    \\    <property type="s" name="LoopStatus" access="readwrite"/>
-    \\    <property type="d" name="Rate" access="readwrite"/>
-    \\    <property type="b" name="Shuffle" access="readwrite"/>
-    \\    <property type="a{sv}" name="Metadata" access="read"/>
-    \\    <property type="d" name="Volume" access="readwrite"/>
-    \\    <property type="x" name="Position" access="read"/>
-    \\    <property type="d" name="MinimumRate" access="read"/>
-    \\    <property type="d" name="MaximumRate" access="read"/>
-    \\    <property type="b" name="CanGoNext" access="read"/>
-    \\    <property type="b" name="CanGoPrevious" access="read"/>
-    \\    <property type="b" name="CanPlay" access="read"/>
-    \\    <property type="b" name="CanPause" access="read"/>
-    \\    <property type="b" name="CanSeek" access="read"/>
-    \\    <property type="b" name="CanControl" access="read"/>
-    \\  </interface>
-    \\</node>
+        \\  <interface name="org.mpris.MediaPlayer2">
+        \\    <method name="Raise"/>
+        \\    <method name="Quit"/>
+        \\    <property type="b" name="CanQuit" access="read"/>
+        \\    <property type="b" name="CanSetFullscreen" access="read"/>
+        \\    <property type="b" name="CanRaise" access="read"/>
+        \\    <property type="b" name="HasTrackList" access="read"/>
+        \\    <property type="s" name="Identity" access="read"/>
+        \\    <property type="s" name="DesktopEntry" access="read"/>
+        \\    <property type="as" name="SupportedUriSchemes" access="read"/>
+        \\    <property type="as" name="SupportedMimeTypes" access="read"/>
+        \\  </interface>
+        \\  <interface name="org.mpris.MediaPlayer2.Player">
+        \\    <method name="Next"/>
+        \\    <method name="Previous"/>
+        \\    <method name="Pause"/>
+        \\    <method name="PlayPause"/>
+        \\    <method name="Stop"/>
+        \\    <method name="Play"/>
+        \\    <method name="Seek">
+        \\      <arg type="x" name="Offset" direction="in"/>
+        \\    </method>
+        \\    <method name="SetPosition">
+        \\      <arg type="o" name="TrackId" direction="in"/>
+        \\      <arg type="x" name="Position" direction="in"/>
+        \\    </method>
+        \\    <method name="OpenUri">
+        \\      <arg type="s" name="Uri" direction="in"/>
+        \\    </method>
+        \\    <method name="LoadContextUri">
+        \\      <arg type="s" name="Uri" direction="in"/>
+        \\    </method>
+        \\    <signal name="Seeked">
+        \\      <arg type="x" name="Position"/>
+        \\    </signal>
+        \\    <property type="s" name="PlaybackStatus" access="read"/>
+        \\    <property type="s" name="LoopStatus" access="readwrite"/>
+        \\    <property type="d" name="Rate" access="readwrite"/>
+        \\    <property type="b" name="Shuffle" access="readwrite"/>
+        \\    <property type="a{sv}" name="Metadata" access="read"/>
+        \\    <property type="d" name="Volume" access="readwrite"/>
+        \\    <property type="x" name="Position" access="read"/>
+        \\    <property type="d" name="MinimumRate" access="read"/>
+        \\    <property type="d" name="MaximumRate" access="read"/>
+        \\    <property type="b" name="CanGoNext" access="read"/>
+        \\    <property type="b" name="CanGoPrevious" access="read"/>
+        \\    <property type="b" name="CanPlay" access="read"/>
+        \\    <property type="b" name="CanPause" access="read"/>
+        \\    <property type="b" name="CanSeek" access="read"/>
+        \\    <property type="b" name="CanControl" access="read"/>
+        \\  </interface>
+        \\</node>
     ;
     _ = response2;
 }
@@ -274,7 +273,7 @@ fn UnionType(comptime U: type, comptime tag: std.meta.Tag(U)) type {
     return @FieldType(U, @tagName(tag));
 }
 
-pub fn genIntrospectionResponse(comptime ServiceDef: type,  path: []const u8, w: *std.Io.Writer) MessageHandlerError!void {
+pub fn genIntrospectionResponse(comptime ServiceDef: type, path: []const u8, w: *std.Io.Writer) MessageHandlerError!void {
     const service_paths = typeFieldNames(ServiceDef.Request);
 
     const PathEnum = @typeInfo(ServiceDef.Request).@"union".tag_type.?;
@@ -282,7 +281,7 @@ pub fn genIntrospectionResponse(comptime ServiceDef: type,  path: []const u8, w:
         switch (pe) {
             inline else => |pe_comptime| {
                 try genIntrospectionResponseMatchingPath(UnionType(ServiceDef.Request, pe_comptime), w);
-            }
+            },
         }
         return;
     }
@@ -342,7 +341,7 @@ test "genIntrospectionResponse leading paths" {
             \\<node>
             \\  <node name="org"/>
             \\</node>
-            , w.buffered());
+        , w.buffered());
     }
 
     {
@@ -356,7 +355,7 @@ test "genIntrospectionResponse leading paths" {
             \\<node>
             \\  <node name="mpris"/>
             \\</node>
-            , w.buffered());
+        , w.buffered());
     }
 
     {
@@ -370,7 +369,7 @@ test "genIntrospectionResponse leading paths" {
             \\<node>
             \\  <node name="MediaPlayer2"/>
             \\</node>
-            , w.buffered());
+        , w.buffered());
     }
 }
 
@@ -1081,8 +1080,7 @@ test "genIntrospectionResponse full definition" {
 
     try genIntrospectionResponse(mpris_service, "/org/mpris/MediaPlayer2", &w);
 
-    try std.testing.expectEqualStrings(
-        expected, w.buffered());
+    try std.testing.expectEqualStrings(expected, w.buffered());
 }
 
 fn getDirectChildPathName(introspection_path: []const u8, service_path: []const u8) ?[]const u8 {

@@ -4,11 +4,11 @@ pub const Request = union(enum) {
     @"/dev/sphaerophoria/TestService": union(enum) {
         @"dev.sphaerophoria.TestService": union(enum) {
             method: union(enum) {
-                @"Hello": struct {
-                    @"Name": dbus.DbusString,
+                Hello: struct {
+                    Name: dbus.DbusString,
                 },
-                @"Goodbye": struct {
-                    @"Name": dbus.DbusString,
+                Goodbye: struct {
+                    Name: dbus.DbusString,
                 },
             },
             get_property: Property,
@@ -27,7 +27,7 @@ pub const Request = union(enum) {
                 \\      <arg direction="out" type="s" name="value" />
                 \\    </method>
                 \\  </interface>
-           ;
-        }
+            ;
+        },
     },
 };

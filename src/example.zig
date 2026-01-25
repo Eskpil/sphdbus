@@ -32,7 +32,6 @@ const DbusHandler = struct {
 
     pub fn deinit(self: *DbusHandler) void {
         self.stream.close();
-
     }
 
     fn poll(self: *DbusHandler, options: dbus.ParseOptions) !void {
