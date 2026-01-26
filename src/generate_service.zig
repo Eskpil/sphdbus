@@ -7,172 +7,429 @@ const sphtud = @import("sphtud");
 const DbusSchemaParser = @import("DbusSchemaParser.zig");
 const helpers = @import("generate_helpers.zig");
 
-fn genInterfaceProperty(prop: *DbusSchemaParser.Property, w: *std.Io.Writer) !void {
-    try w.print(
-        \\                @"{s}": {f},
-        \\
-    , .{
-        prop.name,
-        helpers.dbusToZigType(prop.typ),
-    });
+fn LinkedIndentPrinter(indent_level: usize) type {
+    return struct {
+        w: *std.Io.Writer,
+        wants_indent: *bool,
 
-    return;
+        const indent_start = "    " ** indent_level;
+
+        pub fn indent(self: @This()) LinkedIndentPrinter(indent_level + 1) {
+            return .{
+                .w = self.w,
+                .wants_indent = self.wants_indent,
+            };
+        }
+
+        // FIXME: Always indents first line, needs to track previous newline
+        // state and only indent if previous thing ended with a newline. I
+        // don't think we can just unconditionally write the indent, cause we
+        // might want a new indent level on the next line
+        fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+            const new_fmt = comptime blk: {
+                var new_fmt: []const u8 = "";
+                var it = std.mem.splitScalar(u8, fmt, '\n');
+
+                if (it.next()) |first| {
+                    // First line does not get indent in comptime block as we
+                    // don't know if we want to indent until we have runtime
+                    // info
+                    new_fmt = first;
+                }
+
+                while (it.next()) |line| {
+                    if (line.len > 0) {
+                        new_fmt = new_fmt ++ "\n" ++ indent_start ++ line;
+                    } else {
+                        new_fmt = new_fmt ++ "\n";
+                    }
+                }
+                break :blk new_fmt;
+            };
+
+            if (self.wants_indent.*) {
+                try self.w.writeAll(indent_start);
+            }
+            // This doesn't handle the case where fmt ends with a string and
+            // the arg ends with a newline. That seems way harder to implement
+            // though, so this is good enough for now
+            self.wants_indent.* = endsWithNewline(fmt);
+
+            try self.w.print(new_fmt, args);
+        }
+
+        fn writeAll(self: @This(), data: []const u8) !void {
+            var it = std.mem.splitScalar(u8, data, '\n');
+
+            if (it.next()) |line| {
+                if (self.wants_indent.*) {
+                    try self.writeIndentedLine(line);
+                } else {
+                    try self.w.writeAll(line);
+                }
+            }
+
+            while (it.next()) |line| {
+                try self.w.writeByte('\n');
+                try self.writeIndentedLine(line);
+            }
+
+            self.wants_indent.* = endsWithNewline(data);
+        }
+
+        fn writeIndentedLine(self: @This(), line: []const u8) !void {
+            if (line.len > 0) {
+                try self.w.writeAll(indent_start);
+                try self.w.writeAll(line);
+            }
+        }
+
+        fn endsWithNewline(buf: []const u8) bool {
+            if (buf.len == 0) return false;
+            return buf[buf.len - 1] == '\n';
+        }
+    };
 }
 
-fn genInterfaceMethod(method: *DbusSchemaParser.Method, w: *std.Io.Writer) !void {
-    if (method.args.len == 0) {
-        try w.print(
-            \\                @"{s}": void,
-            \\
-        , .{method.name});
+fn IndentPrinter(indent_level: usize) type {
+    return struct {
+        w: *std.Io.Writer,
+        wants_indent: bool,
 
+        const indent_start = "    " ** indent_level;
+
+        pub fn indent(self: *@This()) LinkedIndentPrinter(indent_level + 1) {
+            return .{
+                .w = self.w,
+                .wants_indent = &self.wants_indent,
+            };
+        }
+
+        fn linked(self: *@This()) LinkedIndentPrinter(indent_level) {
+            return .{
+                .w = self.w,
+                .wants_indent = &self.wants_indent,
+            };
+        }
+
+        pub fn print(self: *@This(), comptime fmt: []const u8, args: anytype) !void {
+            try self.linked().print(fmt, args);
+        }
+
+        fn writeAll(self: *@This(), data: []const u8) !void {
+            try self.linked().writeAll(data);
+        }
+    };
+}
+
+test "indent writer" {
+    var buf: [4096]u8 = undefined;
+
+    {
+        var w = std.Io.Writer.fixed(&buf);
+        var iw = indentPrinter(&w, 1);
+        try iw.print(
+            \\Hello {s}
+            \\it is a good day
+            \\
+        , .{"friend"});
+
+        try std.testing.expectEqualStrings(
+            \\    Hello friend
+            \\    it is a good day
+            \\
+        , w.buffered());
+    }
+
+    {
+        var w = std.Io.Writer.fixed(&buf);
+        var iw = indentPrinter(&w, 1);
+        try iw.writeAll("Hello ");
+        try iw.writeAll("friend\n");
+        try iw.writeAll("it is a good day\n");
+
+        try std.testing.expectEqualStrings(
+            \\    Hello friend
+            \\    it is a good day
+            \\
+        , w.buffered());
+    }
+}
+
+fn indentPrinter(w: *std.Io.Writer, comptime indent_level: usize) IndentPrinter(indent_level) {
+    return .{
+        .w = w,
+        .wants_indent = true,
+    };
+}
+
+
+const zig_writer = struct {
+    pub const OpenOptions = struct {
+        public: bool = false,
+    };
+
+    pub fn import(p: anytype, name: anytype, source: anytype) !void {
+        try p.print(
+            \\const @"{f}" = @import("{f}");
+            \\
+        , .{ asFmt(name), asFmt(source) });
+    }
+
+    pub fn openStruct(p: anytype, name: anytype, comptime opts: OpenOptions) !void {
+        try openContainer(p, name, "struct", opts);
+    }
+
+    pub fn closeStruct(p: anytype) !void {
+        try closeContainer(p);
+    }
+
+    pub fn openTaggedUnion(p: anytype, name: anytype, comptime opts: OpenOptions) !void {
+        try openContainer(p, name, "union(enum)", opts);
+    }
+
+    pub fn closeUnion(p: anytype) !void {
+        try closeContainer(p);
+    }
+
+    pub fn openStructField(p: anytype, name: anytype) !void {
+        try openContainerField(p, name, "struct");
+    }
+
+    pub fn closeStructField(p: anytype) !void {
+        try closeContainerField(p);
+    }
+
+    pub fn openTaggedUnionField(p: anytype, name: anytype) !void {
+        try openContainerField(p, name, "union(enum)");
+    }
+
+    pub fn closeUnionField(p: anytype) !void {
+        try closeContainerField(p);
+    }
+
+    pub fn emptyStruct(p: anytype, name: anytype, comptime opts: OpenOptions) !void {
+        try p.print(
+            \\{s}const @"{f}" = struct {{}};
+            \\
+        , .{ pubString(opts), asFmt(name) });
+    }
+
+    pub fn field(p: anytype, name: anytype, typ: anytype) !void {
+        try p.print(
+            \\@"{f}": {f},
+            \\
+        , .{ asFmt(name), asFmt(typ) });
+    }
+
+
+    fn openContainerField(p: anytype, name: anytype, typ: []const u8) !void {
+        try p.print(
+            \\@"{f}": {s} {{
+            \\
+        , .{ asFmt(name), typ });
+    }
+
+
+    fn openContainer(p: anytype, name: anytype, typ: []const u8, comptime opts: OpenOptions) !void {
+        try p.print(
+            \\{s}const @"{f}" = {s} {{
+            \\
+        , .{ pubString(opts), asFmt(name), typ });
+    }
+
+    fn closeContainerField(p: anytype) !void {
+        try p.writeAll(
+            \\},
+            \\
+        );
+    }
+
+    fn closeContainer(p: anytype) !void {
+        try p.writeAll(
+            \\};
+            \\
+        );
+    }
+
+    const StringFormatter = struct {
+        val: []const u8,
+
+        pub fn format(self: StringFormatter, w: *std.Io.Writer) !void {
+            try w.writeAll(self.val);
+        }
+    };
+
+    fn isString(comptime T: type) bool {
+        const ti = @typeInfo(T);
+        switch (ti) {
+            .pointer => |pi| {
+                const ci = @typeInfo(pi.child);
+                switch (ci) {
+                    .array => |ai| return ai.child == u8,
+                    else => if (pi.child != u8) return false,
+                }
+
+                switch (pi.size) {
+                    .c, .one, .many => return false,
+                    .slice => return true,
+                }
+
+            },
+            else => return false,
+
+        }
+    }
+
+    fn AsFmt(comptime T: type) type {
+        if (isString(T)) {
+            return StringFormatter;
+        }
+        else if (@hasDecl(T, "format")) {
+            return T;
+        }
+
+        @compileError("Unsupported type " ++ @typeName(T));
+    }
+
+    fn asFmt(val: anytype) AsFmt(@TypeOf(val)) {
+        switch (AsFmt(@TypeOf(val))) {
+            StringFormatter => return StringFormatter { .val = val },
+            else => return val,
+        }
+    }
+
+    fn pubString(comptime opts: OpenOptions) []const u8 {
+        return if (opts.public) "pub " else "";
+    }
+};
+
+const zw = zig_writer;
+
+fn genInterfaceProperty(prop: *DbusSchemaParser.Property, p: anytype) !void {
+    try zw.field(p, prop.name, helpers.dbusToZigType(prop.typ));
+}
+
+fn genInterfaceMethod(method: *DbusSchemaParser.Method, p: anytype) !void {
+    if (method.args.len == 0) {
+        try zw.field(p, method.name, "void");
         return;
     }
 
-    try w.print(
-        \\                @"{s}": struct {{
-        \\
-    , .{method.name});
+    try zw.openStructField(p, method.name);
 
     var args_it = method.args.iter();
+
+    const field_printer = p.indent();
     while (args_it.next()) |arg| {
-        try w.print(
-            \\                    @"{s}": {f},
-            \\
-        , .{
-            arg.name,
-            helpers.dbusToZigType(arg.typ),
-        });
+        try zw.field(field_printer, arg.name, helpers.dbusToZigType(arg.typ));
     }
 
-    try w.writeAll(
-        \\                },
-        \\
-    );
+    try zw.closeStructField(p);
 }
 
-fn genInterfaceRequest(reader: *std.fs.File.Reader, interface: *DbusSchemaParser.Interface, w: *std.Io.Writer) !void {
-    try w.print(
-        \\        @"{s}": union(enum) {{
-        \\            method: union(enum) {{
-        \\
-    , .{interface.name});
+fn genDocstring(reader: *std.fs.File.Reader, interface: *DbusSchemaParser.Interface, p: anytype) !void {
+    try reader.seekTo(interface.xml_start);
 
-    var method_it = interface.methods.iter();
-    while (method_it.next()) |method| {
-        try genInterfaceMethod(method, w);
-    }
-
-    //FIXME: Don't inline property and give it a named type that is used for both getter and setter
-    //FIXME: Impl set property
-    try w.writeAll(
-        \\            },
-        \\            get_property: Property,
-        \\            set_property: Property,
-        \\
-        \\
-    );
-
-    if (interface.properties.len == 0) {
-        try w.writeAll(
-            \\            const Property = struct {};
-            \\
-        );
-    } else {
-        try w.writeAll(
-            \\            const Property = union(enum) {
-            \\
-        );
-        var property_it = interface.properties.iter();
-        while (property_it.next()) |prop| {
-            try genInterfaceProperty(prop, w);
-        }
-
-        // Finish property
-        try w.writeAll(
-            \\            };
-            \\
-        );
-    }
-
-    // docstring
-    // FIXME: split gen docstring
     // FIXME: Remove any node starting with tp: to remove all the useless docs
     try reader.seekTo(interface.xml_start);
+
     const xml_len = interface.xml_end - interface.xml_start;
-    std.debug.print("start: {d} , end: {d}\n", .{ interface.xml_start, interface.xml_end });
+
     var line_buf: [4096]u8 = undefined;
     var limited = reader.interface.limited(.limited(xml_len), &line_buf);
-    try w.writeAll(
+
+    // zig_writer is not generic enough to do everything, we just write this
+    // part ourselves
+
+    try p.writeAll(
         \\
-        \\            pub const docstring: []const u8 =
+        \\pub const docstring: []const u8 =
         \\
     );
 
-    while (true) {
-        const line = limited.interface.takeDelimiterExclusive('\n') catch |e| switch (e) {
-            error.EndOfStream => break,
-            else => return e,
-        };
-
-        // FIXME: Merge failure with above
-        _ = limited.interface.discard(.limited(1)) catch |e| switch (e) {
-            error.EndOfStream => break,
-            else => return e,
-        };
-
-        try w.print(
-            \\                \\{s}
+    while (try limited.interface.takeDelimiter('\n')) |line|{
+        try p.print(
+            \\    \\{s}
             \\
         , .{line});
     }
 
-    try w.writeAll(
-        \\
-        \\           ;
+    try p.writeAll(
+        \\    ;
         \\
     );
+}
 
-    // Finish interface union
-    try w.writeAll(
-        \\        }
-        \\
-    );
-    //const Request = union(enum) {
-    //    @"/my/path/1": union(enum) {
-    //        @"org.MyInterface1": union(enum) {
-    //            method: union(enum) {
-    //                @"DoThing1": void,
-    //                @"DoThing2": struct {
-    //                    a_string: dbus.DbusString,
-    //                    a_int: u32,
-    //                },
-    //                @"DoThing3": struct {
-    //                    dbus.DbusString,
-    //                    u32,
-    //                },
-    //            },
-    //            property: union(enum) {
-    //                @"MyProp": struct { dbus.DbusString },
-    //            },
-    //        },
-    //    },
-    //    @"/my/path/2": union(enum) {},
-    //    @"/something_else_entirely": union(enum) {},
-    //};
+fn genInterfaceMethods(p: anytype, interface: *DbusSchemaParser.Interface) !void {
+    try zw.openTaggedUnionField(p, "method");
+
+    var method_it = interface.methods.iter();
+
+    const fp = p.indent();
+    while (method_it.next()) |method| {
+        try genInterfaceMethod(method, fp);
+    }
+
+    try zw.closeUnionField(p);
 
 }
 
-fn genInterfaces(alloc: sphtud.alloc.LinearAllocator, base_path: []const u8, interface_path: []const u8, w: *std.Io.Writer) !void {
+fn genInterfacePropertyType(interface: *DbusSchemaParser.Interface, p: anytype) !void {
+    const opts = zw.OpenOptions { .public = true };
+
+    if (interface.properties.len == 0) {
+        try zw.emptyStruct(p, "Property", opts);
+        return;
+    }
+
+    try zw.openTaggedUnion(p, "Property", .{ .public = true });
+    var property_it = interface.properties.iter();
+    while (property_it.next()) |prop| {
+        try zw.field(p.indent(), prop.name, helpers.dbusToZigType(prop.typ));
+    }
+
+    try zw.closeUnion(p);
+}
+
+fn genInterface(reader: *std.fs.File.Reader, interface: *DbusSchemaParser.Interface, p: anytype) !void {
+    try zw.openTaggedUnionField(p, interface.name);
+
+    const interface_p = p.indent();
+
+    try genInterfaceMethods(interface_p, interface);
+    try zw.field(interface_p, "get_property", "Property");
+    try zw.field(interface_p, "set_property", "Property");
+
+    try interface_p.writeAll("\n");
+
+    try genInterfacePropertyType(interface, interface_p);
+
+    try genDocstring(reader, interface, interface_p);
+
+    try zw.closeUnionField(p);
+}
+
+fn openRelativeFile(base_path: []const u8, interface_path: []const u8) !std.fs.File {
+    var full_relative_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+    const full_relative_path = try std.fmt.bufPrint(
+        &full_relative_path_buf,
+        "{f}",
+        .{
+            std.fs.path.fmtJoin(&.{ base_path, interface_path }),
+        },
+    );
+
+    return try std.fs.cwd().openFile(full_relative_path, .{});
+}
+
+
+fn genInterfaces(alloc: sphtud.alloc.LinearAllocator, base_path: []const u8, interface_path: []const u8, p: anytype) !void {
     const cp = alloc.checkpoint();
     defer alloc.restore(cp);
 
-    // lol funny name...
-    var full_relative_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const full_relative_path = try std.fmt.bufPrint(&full_relative_path_buf, "{f}", .{std.fs.path.fmtJoin(&.{ base_path, interface_path })});
-
-    std.debug.print("{s}\n", .{full_relative_path});
-    const interface_f = try std.fs.cwd().openFile(full_relative_path, .{});
+    const interface_f = try openRelativeFile(base_path, interface_path);
     defer interface_f.close();
 
     var reader_buf: [4096]u8 = undefined;
@@ -188,7 +445,7 @@ fn genInterfaces(alloc: sphtud.alloc.LinearAllocator, base_path: []const u8, int
 
     var interfaces = schema_parser.output.iter();
     while (interfaces.next()) |interface| {
-        try genInterfaceRequest(&reader, interface, w);
+        try genInterface(&reader, interface, p);
     }
 }
 
@@ -217,38 +474,30 @@ pub fn main() !void {
 
     const w = &output_writer.interface;
 
-    try w.writeAll(
-        \\const dbus = @import("sphdbus");
-        \\
-        \\pub const Request = union(enum) {
-        \\
-    );
+    var p = indentPrinter(w, 0);
+    try zw.import(&p, "dbus", "sphdbus");
+    try p.writeAll("\n");
+
+    try zw.openTaggedUnion(&p, "Request", .{ .public = true });
+
     var service_parser = sphtud.xml.Parser.init(&service_f_reader.interface);
     var discarding_w = std.Io.Writer.Discarding.init(&.{});
     while (try service_parser.next(&discarding_w.writer)) |item| switch (item.type) {
         .element_start => {
-            // FXIME: name -> object-path
             const object_path = try item.attributeByKey("name");
             const interface = try item.attributeByKey("interface");
 
-            try w.print(
-                \\    @"{s}": union(enum) {{
-                \\
-            , .{object_path.?});
+            const fp = p.indent();
+            try zw.openTaggedUnionField(fp, object_path.?);
 
-            try genInterfaces(alloc.linear(), base_path, interface.?, &output_writer.interface);
+            try genInterfaces(alloc.linear(), base_path, interface.?, fp.indent());
 
-            try w.writeAll(
-                \\    },
-                \\
-            );
+            try zw.closeUnionField(fp);
         },
         else => {},
     };
 
-    try w.writeAll(
-        \\};
-        \\
-    );
+    try zw.closeUnion(&p);
+
     try output_writer.interface.flush();
 }

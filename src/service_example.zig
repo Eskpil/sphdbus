@@ -100,35 +100,6 @@ fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, con
     return null;
 }
 
-//// XML for all the services i support
-//// XML for introsection response on a specific path
-//fn genIntrospectionResponse(w: *std.Io.Writer, path: []const u8, def: anytype) !void {
-//
-//
-//}
-
-// getProperty
-// setProperty
-// introspection
-//
-// services with endpoints
-//
-// * My service has one name
-// * My service has multiple endpoints
-//
-// mysite.com/thing/thing
-
-// Needs to be able to respond with
-//  * get property
-//  * set property
-//  * custom
-//
-//  * Which path
-//  * Which service
-//  * Which fn
-//fn handleMyDbusRequest(comptime HandlerRequest: type, def: []const DbusObjectDef(HandlerRequest)) ?HandlerRequest {
-//}
-
 fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
     const request = (try dbus.service.handleMessage(service_def, scratch, message, connection)) orelse return;
 
