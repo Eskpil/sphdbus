@@ -21,10 +21,6 @@ fn LinkedIndentPrinter(indent_level: usize) type {
             };
         }
 
-        // FIXME: Always indents first line, needs to track previous newline
-        // state and only indent if previous thing ended with a newline. I
-        // don't think we can just unconditionally write the indent, cause we
-        // might want a new indent level on the next line
         fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
             const new_fmt = comptime blk: {
                 var new_fmt: []const u8 = "";
@@ -163,7 +159,7 @@ fn indentPrinter(w: *std.Io.Writer, comptime indent_level: usize) IndentPrinter(
     };
 }
 
-
+// FIXME: move into sphtud
 const zig_writer = struct {
     pub const OpenOptions = struct {
         public: bool = false,
