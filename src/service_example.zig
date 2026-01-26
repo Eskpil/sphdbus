@@ -17,91 +17,17 @@ fn waitForResponse(connection: *dbus.DbusConnection, handle: dbus.CallHandle, pa
     }
 }
 
-const service_object = "/dev/sphaerophoria/TestService";
-
-const ExpectedObjectPath = enum {
-    @"/",
-    @"/dev",
-    @"/dev/sphaerophoria",
-    @"/dev/sphaerophoria/TestService",
-
-    fn child(self: ExpectedObjectPath) []const u8 {
-        switch (self) {
-            .@"/" => return "dev",
-            .@"/dev" => return "sphaerophoria",
-            .@"/dev/sphaerophoria" => return "TestService",
-            .@"/dev/sphaerophoria/TestService" => unreachable,
-        }
-    }
+const ResponseAction = enum {
+    none,
+    shutdown,
 };
 
-pub fn ObjectApi(comptime Api: type) type {
-    if (!@hasDecl(Api, "name")) {
-        @compileError("Api needs name retrieval function");
-    }
+fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !ResponseAction {
+    const request = dbus.service.handleMessage(service_def, scratch, message, connection) catch |e| switch (e) {
+        error.WriteFailed, error.InternalError => return .shutdown,
+        error.InvalidRequest => return .none,
+    } orelse return .none;
 
-    if (!@hasDecl(Api, "definition")) {
-        @compileError("Api needs definition retrieval function");
-    }
-
-    return struct {
-        path: []const u8,
-        api: Api,
-    };
-}
-
-fn getDirectChildPathName(introspection_path: []const u8, service_path: []const u8) ?[]const u8 {
-    if (service_path.len <= introspection_path.len) return null;
-
-    const trimmed_introspection_path = std.mem.trimRight(u8, introspection_path, "/");
-    std.debug.print("{s}: {s}\n", .{ service_path, trimmed_introspection_path });
-    if (!std.mem.startsWith(u8, service_path, trimmed_introspection_path)) {
-        return null;
-    }
-
-    const end_idx = std.mem.indexOfScalarPos(u8, service_path, trimmed_introspection_path.len + 1, '/') orelse service_path.len;
-    const ret = service_path[trimmed_introspection_path.len + 1 .. end_idx];
-    if (ret.len == 0) return null;
-    return ret;
-}
-
-fn handleCommonDbusRequests(comptime Api: type, message: dbus.ParsedMessage, connection: *dbus.DbusConnection, services: []const ObjectApi(Api)) !?Api {
-    const member = message.headers.member orelse return error.NoMember;
-    const interface = message.headers.interface orelse return error.NoInterface;
-    const path = message.headers.path orelse return error.NoPath;
-    const sender = message.headers.sender orelse return error.NoSender;
-
-    if (std.mem.eql(u8, interface.inner, "org.freedesktop.DBus.Introspectable") and std.mem.eql(u8, member.inner, "Introspect")) {
-        var out_buf: [4096]u8 = undefined;
-        var writer = std.Io.Writer.fixed(&out_buf);
-
-        try dbus.service.genIntrospectionResponse(service_def, path.inner, &writer);
-
-        try connection.ret(message.serial, sender.inner, .{
-            dbus.DbusString{ .inner = writer.buffered() },
-        });
-
-        return null;
-    }
-
-    for (services) |service| {
-        if (std.mem.eql(u8, path.inner, service.path) and std.mem.eql(u8, service.api.name(), interface.inner)) {
-            return service.api;
-        }
-    }
-
-    try connection.err(
-        message.serial,
-        sender.inner,
-        .{ .inner = "org.freedesktop.DBus.Error.UnknownObject" },
-        dbus.DbusString{ .inner = "unknown object" },
-    );
-
-    return null;
-}
-
-fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) !void {
-    const request = (try dbus.service.handleMessage(service_def, scratch, message, connection)) orelse return;
 
     switch (request) {
         .@"/dev/sphaerophoria/TestService" => |path_req| switch (path_req) {
@@ -109,7 +35,7 @@ fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connec
                 .method => |method_req| switch (method_req) {
                     .Hello => |args| {
                         var buf: [4096]u8 = undefined;
-                        const s = std.fmt.bufPrint(&buf, "Hello {s}", .{args.Name.inner}) catch return error.InternalError;
+                        const s = try std.fmt.bufPrint(&buf, "Hello {s}", .{args.Name.inner});
 
                         // FIXME: Return types should be typed
                         try connection.ret(
@@ -120,7 +46,7 @@ fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connec
                     },
                     .Goodbye => |args| {
                         var buf: [4096]u8 = undefined;
-                        const s = std.fmt.bufPrint(&buf, "Goodbye {s}", .{args.Name.inner}) catch return error.InternalError;
+                        const s = try std.fmt.bufPrint(&buf, "Goodbye {s}", .{args.Name.inner});
                         // FIXME: Return types should be typed
                         try connection.ret(
                             message.serial,
@@ -133,6 +59,8 @@ fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connec
             },
         },
     }
+
+    return .none;
 }
 
 fn dumpDiagnostics(diagnostics: dbus.DbusErrorDiagnostics) !void {
@@ -212,64 +140,10 @@ pub fn main() !void {
             else => continue,
         };
 
-        writeResponse(buf_alloc.backAllocator(), params, &connection) catch |e| switch (e) {
-            error.WriteFailed => {
-                std.log.info("IO failure, shutting down", .{});
-                break;
-            },
-            error.OutOfMemory => {
-                std.log.err("Internal oom error, dropping response", .{});
-            },
-            error.SerializeError => {
-                std.log.err("Internal serialization error, dropping response", .{});
-            },
-            error.NoMember, error.NoSender, error.NoInterface, error.NoPath => {
-                std.log.err("Invalid request ({t}), dropping response", .{e});
-            },
-            // FIXME: This is rediculous, caller may want to define message,
-            // but maybe not. Maybe this all just lives in lib code
-            error.InvalidBody => {
-                try connection.err(
-                    params.serial,
-                    params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.InvalidArgs" },
-                    null,
-                );
-            },
-            error.Unsupported => {
-                try connection.err(
-                    params.serial,
-                    params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.NotSupported" },
-                    null,
-                );
-            },
-            error.InternalError => {
-                try connection.err(
-                    params.serial,
-                    params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.Failed" },
-                    null,
-                );
-            },
-            error.InvalidInterface => {
-                try connection.err(
-                    params.serial,
-                    params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.UnknownInterface" },
-                    null,
-                );
-            },
-            error.InvalidMethod => {
-                try connection.err(
-                    params.serial,
-                    params.headers.sender.?.inner,
-                    .{ .inner = "org.freedesktop.DBus.Error.UnknownMethod" },
-                    null,
-                );
-            },
-            error.Uninitialized => unreachable,
-        };
+        switch (try writeResponse(buf_alloc.backAllocator(), params, &connection)) {
+            .shutdown => break,
+            .none => {},
+        }
     }
 
     std.debug.print("done\n", .{});

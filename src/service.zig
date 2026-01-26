@@ -1,7 +1,13 @@
 const std = @import("std");
 const dbus = @import("sphdbus.zig");
 
-const MessageHandlerError = error{
+pub const MessageHandlerError = error {
+    InternalError,
+    WriteFailed,
+    InvalidRequest,
+};
+
+const InternalMessageHandlerError = error{
     NoMember,
     NoSender,
     NoInterface,
@@ -12,9 +18,76 @@ const MessageHandlerError = error{
     Unsupported,
     InvalidInterface,
     InvalidMethod,
+    OutOfMemory,
+    SerializeError,
+    Uninitialized,
 };
 
+pub fn respondError(connection: *dbus.DbusConnection, message: dbus.ParsedMessage, comptime typ: []const u8) !void {
+    const sender = message.headers.sender orelse return error.NoSender;
+    try connection.err(
+        message.serial,
+        sender.inner,
+        .{ .inner = typ },
+        null,
+    );
+}
+
+fn handleError(e: InternalMessageHandlerError, connection: *dbus.DbusConnection, message: dbus.ParsedMessage) MessageHandlerError!void {
+    handleErrorInner(e, connection, message) catch |e2| switch (e2) {
+        error.WriteFailed => return error.WriteFailed,
+        error.NoSender => return error.InvalidRequest,
+        // Maybe this isn't ideal, but in reality any errors here are very
+        // surprising and there is nothing the caller can do to resolve them
+        //
+        // * We shouldn't fail to serialize a dbus string with a hardcoded value
+        // * There are no allocators involved here, OOM is about some internal
+        //   buffer or maybe for an unhit path in the serialization stuff
+        // * If we aren't initialized where did the dbus.ParsedMessage come from?
+        error.OutOfMemory, error.SerializeError, error.Uninitialized => return error.InternalError,
+    };
+}
+
+fn handleErrorInner(e: InternalMessageHandlerError, connection: *dbus.DbusConnection, message: dbus.ParsedMessage) !void {
+    switch (e) {
+        error.NoMember => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.UnknownMethod");
+        },
+        error.NoInterface => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.UnknownInterface");
+        },
+        error.NoPath => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.UnknownObject");
+        },
+        error.InvalidBody => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.InvalidArgs");
+        },
+        error.Unsupported => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.NotSupported");
+        },
+        error.InternalError => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.Failed");
+        },
+        error.InvalidInterface => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.UnknownInterface");
+        },
+        error.InvalidMethod => {
+           try respondError(connection, message, "org.freedesktop.DBus.Error.UnknownMethod");
+        },
+        error.NoSender, error.OutOfMemory, error.SerializeError, error.Uninitialized, error.WriteFailed => |t| {
+            return t;
+        },
+    }
+}
+
 pub fn handleMessage(comptime Def: type, scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) MessageHandlerError!?Def.Request {
+    return handleMessageInner(Def, scratch, message, connection) catch |e| {
+        try handleError(e, connection, message);
+        return null;
+    };
+}
+
+pub fn handleMessageInner(comptime Def: type, scratch: std.mem.Allocator, message: dbus.ParsedMessage, connection: *dbus.DbusConnection) InternalMessageHandlerError!?Def.Request {
     const req_headers = try RequiredHeaders.init(message);
 
     if (try parseRequest(Def.Request, message, req_headers)) |r| return r;
@@ -24,12 +97,9 @@ pub fn handleMessage(comptime Def: type, scratch: std.mem.Allocator, message: db
     var introspection_writer = std.Io.Writer.Allocating.init(scratch);
     try genIntrospectionResponse(Def, req_headers.path, &introspection_writer.writer);
 
-    connection.ret(message.serial, req_headers.sender, .{
+    try connection.ret(message.serial, req_headers.sender, .{
         dbus.DbusString{ .inner = introspection_writer.writer.buffered() },
-    }) catch {
-        // FIXME: Attach real error to diagnostics
-        return error.WriteFailed;
-    };
+    });
 
     return null;
 }
@@ -86,7 +156,7 @@ const PropertyInterfaceReq = enum {
     }
 };
 
-fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?T {
+fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) InternalMessageHandlerError!?T {
     const TE = std.meta.Tag(T);
     const pe = std.meta.stringToEnum(TE, required_headers.path) orelse {
         return null;
@@ -99,7 +169,7 @@ fn parseRequest(comptime T: type, message: dbus.ParsedMessage, required_headers:
     }
 }
 
-fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Path {
+fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) InternalMessageHandlerError!?Path {
     const PE = std.meta.Tag(Path);
     const pp = std.meta.stringToEnum(PE, required_headers.interface) orelse {
         return null;
@@ -112,7 +182,7 @@ fn parseRequestPath(comptime Path: type, message: dbus.ParsedMessage, required_h
     }
 }
 
-fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Interface {
+fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) InternalMessageHandlerError!?Interface {
     if (PropertyInterfaceReq.parse(message, required_headers)) |property_req| {
         _ = property_req;
         unreachable;
@@ -128,7 +198,7 @@ fn parseRequestInterface(comptime Interface: type, message: dbus.ParsedMessage, 
     return Interface{ .method = method };
 }
 
-fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) MessageHandlerError!?Method {
+fn parseRequestMethod(comptime Method: type, message: dbus.ParsedMessage, required_headers: RequiredHeaders) InternalMessageHandlerError!?Method {
     const MethodE = std.meta.Tag(Method);
 
     // FIXME: Should we error if it's an invalid member name?
@@ -166,7 +236,7 @@ test typeFieldNames {
     try std.testing.expectEqualStrings("/org/mpris/MediaPlayer2", paths[0]);
 }
 
-fn genIntrospectionResponseMatchingPath(comptime PathDef: type, w: *std.Io.Writer) MessageHandlerError!void {
+fn genIntrospectionResponseMatchingPath(comptime PathDef: type, w: *std.Io.Writer) InternalMessageHandlerError!void {
     try w.writeAll(
         \\<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
         \\                  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
@@ -213,7 +283,7 @@ fn UnionType(comptime U: type, comptime tag: std.meta.Tag(U)) type {
     return @FieldType(U, @tagName(tag));
 }
 
-pub fn genIntrospectionResponse(comptime ServiceDef: type, path: []const u8, w: *std.Io.Writer) MessageHandlerError!void {
+pub fn genIntrospectionResponse(comptime ServiceDef: type, path: []const u8, w: *std.Io.Writer) InternalMessageHandlerError!void {
     const service_paths = typeFieldNames(ServiceDef.Request);
 
     const PathEnum = @typeInfo(ServiceDef.Request).@"union".tag_type.?;
