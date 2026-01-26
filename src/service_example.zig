@@ -28,7 +28,6 @@ fn writeResponse(scratch: std.mem.Allocator, message: dbus.ParsedMessage, connec
         error.InvalidRequest => return .none,
     } orelse return .none;
 
-
     switch (request) {
         .@"/dev/sphaerophoria/TestService" => |path_req| switch (path_req) {
             .@"dev.sphaerophoria.TestService" => |interface_req| switch (interface_req) {

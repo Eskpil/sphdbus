@@ -218,14 +218,12 @@ const zig_writer = struct {
         , .{ asFmt(name), asFmt(typ) });
     }
 
-
     fn openContainerField(p: anytype, name: anytype, typ: []const u8) !void {
         try p.print(
             \\@"{f}": {s} {{
             \\
         , .{ asFmt(name), typ });
     }
-
 
     fn openContainer(p: anytype, name: anytype, typ: []const u8, comptime opts: OpenOptions) !void {
         try p.print(
@@ -270,18 +268,15 @@ const zig_writer = struct {
                     .c, .one, .many => return false,
                     .slice => return true,
                 }
-
             },
             else => return false,
-
         }
     }
 
     fn AsFmt(comptime T: type) type {
         if (isString(T)) {
             return StringFormatter;
-        }
-        else if (@hasDecl(T, "format")) {
+        } else if (@hasDecl(T, "format")) {
             return T;
         }
 
@@ -290,7 +285,7 @@ const zig_writer = struct {
 
     fn asFmt(val: anytype) AsFmt(@TypeOf(val)) {
         switch (AsFmt(@TypeOf(val))) {
-            StringFormatter => return StringFormatter { .val = val },
+            StringFormatter => return StringFormatter{ .val = val },
             else => return val,
         }
     }
@@ -344,7 +339,7 @@ fn genDocstring(reader: *std.fs.File.Reader, interface: *DbusSchemaParser.Interf
         \\
     );
 
-    while (try limited.interface.takeDelimiter('\n')) |line|{
+    while (try limited.interface.takeDelimiter('\n')) |line| {
         try p.print(
             \\    \\{s}
             \\
@@ -368,11 +363,10 @@ fn genInterfaceMethods(p: anytype, interface: *DbusSchemaParser.Interface) !void
     }
 
     try zw.closeUnionField(p);
-
 }
 
 fn genInterfacePropertyType(interface: *DbusSchemaParser.Interface, p: anytype) !void {
-    const opts = zw.OpenOptions { .public = true };
+    const opts = zw.OpenOptions{ .public = true };
 
     if (interface.properties.len == 0) {
         try zw.emptyStruct(p, "Property", opts);
@@ -419,7 +413,6 @@ fn openRelativeFile(base_path: []const u8, interface_path: []const u8) !std.fs.F
 
     return try std.fs.cwd().openFile(full_relative_path, .{});
 }
-
 
 fn genInterfaces(alloc: sphtud.alloc.LinearAllocator, base_path: []const u8, interface_path: []const u8, p: anytype) !void {
     const cp = alloc.checkpoint();
