@@ -1,5 +1,5 @@
 .{
-    .name = .sphtud,
+    .name = .sphdbus,
     .version = "0.0.1",
     .paths = .{
         "main.zig",
