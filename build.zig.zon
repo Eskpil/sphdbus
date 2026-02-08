@@ -8,9 +8,9 @@
     },
     .dependencies = .{
         .sphtud = .{
-            .path = "sphtud",
+            .url = "git+https://github.com/sphaerophoria/sphtud.git#f6569002903a9040e464b7a3a400fc7a06b6a72f",
+            .hash = "sphtud-0.0.1-VTfJlmV0HwPE60--gL9BEJQEoYMT_Lhqa3tKwCewwazU",
         },
     },
     .fingerprint = 0x86dff6aaf331900d,
-
 }
