@@ -11,6 +11,6 @@
             .path = "sphtud",
         },
     },
-    .fingerprint = 0x86dff6aaf331900d,
+    .fingerprint = 0x705b09912eeb34df,
 
 }
