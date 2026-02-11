@@ -979,6 +979,9 @@ pub fn dbusParseBodyInner(comptime T: type, endianness: DbusEndianness, dr: *Dbu
         i32 => {
             return try dr.readI32(endianness);
         },
+        i64 => {
+            return try dr.readI64(endianness);
+        },
         u64 => {
             return try dr.readU64(endianness);
         },
@@ -1310,6 +1313,8 @@ pub const DbusConnection = struct {
                     },
                 };
             }
+
+            if (message.message_type == .signal) {}
 
             if (message.message_type == .call) {
                 return .{

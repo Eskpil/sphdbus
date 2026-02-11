@@ -7,11 +7,13 @@ alloc: std.mem.Allocator,
 expansion_alloc: sphtud.util.ExpansionAlloc,
 current_interface: Interface = .{},
 current_method: Method = .{},
+current_signal: Signal = .{},
 output: sphtud.util.RuntimeSegmentedList(Interface),
 state: enum {
     default,
     interface,
     method,
+    signal,
 } = .default,
 
 pub fn init(alloc: std.mem.Allocator, expansion_alloc: sphtud.util.ExpansionAlloc) !DbusSchemaParser {
@@ -33,6 +35,7 @@ pub fn step(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
         .default => try self.handleDefault(item),
         .interface => try self.handleInterface(item),
         .method => try self.handleMethod(item),
+        .signal => try self.handleSignal(item),
     }
 }
 
@@ -63,6 +66,15 @@ fn handleInterface(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
                     (try item.attributeByKey("name")) orelse return error.NoMethodName,
                 );
                 self.state = .method;
+            }
+
+            if (std.mem.eql(u8, item.name, "signal")) {
+                self.current_signal = try .init(
+                    self.alloc,
+                    self.expansion_alloc,
+                    (try item.attributeByKey("name")) orelse return error.NoSignalName,
+                );
+                self.state = .signal;
             }
 
             if (std.mem.eql(u8, item.name, "property")) {
@@ -128,6 +140,34 @@ fn handleMethod(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
     }
 }
 
+fn handleSignal(self: *DbusSchemaParser, item: sphtud.xml.Item) !void {
+    switch (item.type) {
+        .element_start => {
+            std.debug.assert(self.state == .signal);
+
+            if (std.mem.eql(u8, item.name, "arg")) {
+                const typ = try self.alloc.dupe(u8, try item.attributeByKey("type") orelse return error.NoType);
+                const name = try self.alloc.dupe(u8, try item.attributeByKey("name") orelse return error.NoName);
+                try self.current_signal.ret.append(.{
+                    .typ = typ,
+                    .name = name,
+                });
+            }
+            // We do not handle nested methods yet
+            std.debug.assert(!std.mem.eql(u8, item.name, "signal"));
+        },
+        .element_end => {
+            // If we see nested interface we will fall over
+            if (std.mem.eql(u8, item.name, "signal")) {
+                try self.current_interface.signals.append(self.current_signal);
+                self.current_signal = .{};
+                self.state = .interface;
+            }
+        },
+        else => {},
+    }
+}
+
 pub const MethodArg = struct {
     typ: []const u8,
     name: []const u8,
@@ -149,9 +189,23 @@ pub const Method = struct {
     }
 };
 
+pub const Signal = struct {
+    name: []const u8 = "",
+    ret: sphtud.util.RuntimeSegmentedList(MethodArg) = .empty,
+
+    pub fn init(alloc: std.mem.Allocator, expansion_alloc: sphtud.util.ExpansionAlloc, name: []const u8) !Signal {
+        return .{
+            .name = try alloc.dupe(u8, name),
+            // FIXME: Update guesses
+            .ret = try .init(alloc, expansion_alloc, 100, 1000),
+        };
+    }
+};
+
 pub const Interface = struct {
     name: []const u8 = "",
     methods: sphtud.util.RuntimeSegmentedList(Method) = .empty,
+    signals: sphtud.util.RuntimeSegmentedList(Signal) = .empty,
     properties: sphtud.util.RuntimeSegmentedList(Property) = .empty,
 
     xml_start: usize = 0,
@@ -164,6 +218,7 @@ pub const Interface = struct {
             .xml_end = xml_start,
             // FIXME: update guesses,
             .methods = try .init(alloc, expansion_alloc, 100, 10000),
+            .signals = try .init(alloc, expansion_alloc, 100, 10000),
             .properties = try .init(alloc, expansion_alloc, 100, 10000),
         };
     }

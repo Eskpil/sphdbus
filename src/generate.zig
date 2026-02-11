@@ -72,7 +72,7 @@ fn dodgeReservedKeyword(val: []const u8) []const u8 {
 }
 
 pub fn main() !void {
-    var alloc_buf: [4 * 1024 * 1024]u8 = undefined;
+    var alloc_buf: [8 * 1024 * 1024]u8 = undefined;
     var root_alloc = sphtud.alloc.BufAllocator.init(&alloc_buf);
     const scratch = root_alloc.backLinear();
 
@@ -201,6 +201,32 @@ pub fn main() !void {
                 unreachable;
             }
         }
+
+        //var signal_it = interface.signals.iter();
+        //while (signal_it.next()) |signal| {
+        //    try f_writer.writer.print(
+        //        \\            pub fn @"on{[signal_name]s}"(
+        //        \\                self: Self,
+        //        \\            ) !dbus.CallHandle {{
+        //        \\                var buf: [256]u8 = undefined;
+        //        \\                const match = try std.fmt.bufPrint(&buf, "type='signal', interface='{[interface_name]s}', member='{[signal_name]s}', object_path='\{{\}}'", .{ self.object_path });
+        //        \\
+        //        \\                return try self.connection.call(
+        //        \\                    "/org/freedesktop/DBus",
+        //        \\                    "/org/freedesktop/DBus",
+        //        \\                    "org.freedesktop.DBus",
+        //        \\                    "AddMatch",
+        //        \\                    .{{
+        //        \\                          dbus.DbusString {{ .inner = match }},
+        //        \\                    }},
+        //        \\                );
+        //        \\            }}
+        //        \\
+        //    , .{
+        //        .signal_name = signal.name,
+        //        .interface_name = interface.name,
+        //    });
+        //}
 
         var property_it = interface.properties.iter();
         while (property_it.next()) |property| {
